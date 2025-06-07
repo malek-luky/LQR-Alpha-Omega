@@ -233,7 +233,9 @@ def main():
     sys_c, sys_d = build_model(cfg)
 
     # Design LQR controller
-    K_lqr = design_lqr(sys_c.A, sys_c.B)
+    Q_custom = np.diag([20, 0.1, 1])  # [angle, rate, deflection] weighting
+    R_custom = np.array([[50]])        # Control effort weighting
+    K_lqr = design_lqr(sys_c.A, sys_c.B, Q_custom, R_custom)
 
     # Convert angle argument to radians if provided
     initial_angle_rad = None
