@@ -7,6 +7,54 @@ Optimal Linear Quadratic Regulator (LQR) implementation for single-axis rocket a
 pip install numpy scipy matplotlib
 ```
 
+## System Architecture
+
+The control system is implemented as modular building blocks, each corresponding to physical components and config parameters:
+
+```mermaid
+graph TD
+    A["Reference<br/>θ_ref = 0°"] --> B["Error<br/>e = θ_ref - θ"]
+    B --> C{Controller Type}
+    
+    C -->|LQR| D["LQR Controller<br/>u = -K[θ, ω, δ]<br/>K from ARE solution"]
+    C -->|PID| E["PID Controller<br/>u = -(Kp·θ + Kd·ω + Ki·∫θdt)<br/>with anti-windup"]
+    
+    D --> F["Rate Limiter<br/>max: 125°/s<br/>Δu ≤ max_rate × dt"]
+    E --> F
+    
+    F --> G["Saturation<br/>±8° TVC range<br/>clip(u, -8°, +8°)"]
+    
+    G --> H["Motor Offset<br/>+0.7° bias<br/>u_actual = u + offset"]
+    
+    H --> I["Servo Dynamics<br/>δ̇ = -δ/τ + u/τ<br/>τ = 33ms"]
+    
+    I --> J["Rocket Dynamics<br/>θ̇ = ω<br/>ω̇ = k·δ<br/>k = T₀·l/I"]
+    
+    J --> K["Sensors<br/>Perfect measurement<br/>y = [θ, ω]"]
+    
+    K --> B
+    
+    J --> L["Output<br/>θ(t), ω(t)"]
+    
+    style A fill:#e1f5fe
+    style D fill:#f3e5f5
+    style E fill:#f3e5f5
+    style F fill:#fff3e0
+    style G fill:#fff3e0
+    style H fill:#fff3e0
+    style I fill:#e8f5e8
+    style J fill:#e8f5e8
+    style K fill:#fce4ec
+    style L fill:#e1f5fe
+```
+
+**Block Color Legend:**
+- 🔵 **Blue**: Reference/Output
+- 🟣 **Purple**: Controllers  
+- 🟠 **Orange**: Actuator Constraints
+- 🟢 **Green**: Physical Dynamics
+- 🟡 **Pink**: Sensors
+
 ## Usage
 ```bash
 python main.py config.json
@@ -170,6 +218,10 @@ Perfect for validating control algorithms before full simulation testing.
 - **Unstable response**: Check thrust value and controller gains
 - **Wrong initial angle**: Verify `initial_x_rot_angle` in config (degrees)
 - **Servo limits**: Check if TVC commands exceed ±8° range
+
+## Theory
+
+For detailed understanding of the state-space construction, building block analysis, and LQR theory, see `Theory.md`.
 
 ## Notes
 

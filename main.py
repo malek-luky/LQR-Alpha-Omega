@@ -48,13 +48,28 @@ def design_lqr(A: np.ndarray, B: np.ndarray, Q=None, R=None) -> np.ndarray:
     return K
 
 
-def apply_servo_constraints(u_cmd, config, dt):
+def apply_servo_constraints(u_cmd, config, dt, u_prev=None):
     """
     Apply servo rate and angle limits with linkage ratio.
-    Returns constrained servo command in degrees.
+    Returns constrained servo command in radians.
     """
     # Convert control command to TVC angle (radians to degrees)
     tvc_angle_deg = np.degrees(u_cmd)
+    
+    # Apply rate limiting if previous command is available
+    if u_prev is not None:
+        max_rate = config.get('tvc_deg_per_second_max', 125.0)
+        max_change = max_rate * dt
+        tvc_prev_deg = np.degrees(u_prev)
+        
+        # Remove motor offset from previous command for rate calculation
+        motor_offset = config.get('tvc_motor_offset_x_deg', 0.0)
+        tvc_prev_deg -= motor_offset
+        
+        # Apply rate limit
+        du = tvc_angle_deg - tvc_prev_deg
+        du_limited = np.clip(du, -max_change, max_change)
+        tvc_angle_deg = tvc_prev_deg + du_limited
     
     # Apply TVC angle range limit
     max_tvc_angle = config.get('tvc_angle_range', 8.0)
@@ -128,7 +143,8 @@ def simulate_response(sys, K, config, T=None, initial_angle=None, controller_typ
         u_cmd[i] = u_val
         
         # Apply servo constraints and motor offset
-        u_constrained = apply_servo_constraints(u_cmd[i], config, dt)
+        u_prev = u_actual[i-1] if i > 0 else None
+        u_constrained = apply_servo_constraints(u_cmd[i], config, dt, u_prev)
         u_actual[i] = u_constrained
         
         # Update state with actual control input
@@ -151,7 +167,8 @@ def simulate_response(sys, K, config, T=None, initial_angle=None, controller_typ
         u_val = u_val[0] if u_val.ndim > 0 else u_val
     
     u_cmd[-1] = u_val
-    u_actual[-1] = apply_servo_constraints(u_cmd[-1], config, dt)
+    u_prev = u_actual[-2] if len(u_actual) > 1 else None
+    u_actual[-1] = apply_servo_constraints(u_cmd[-1], config, dt, u_prev)
     y[-1, :] = C @ x[-1, :]
     
     return t, y, u_cmd, u_actual
