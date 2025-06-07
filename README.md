@@ -36,24 +36,27 @@ graph TD
     
     J --> L["Output<br/>θ(t), ω(t)"]
     
-    style A fill:#e1f5fe
-    style D fill:#f3e5f5
-    style E fill:#f3e5f5
-    style F fill:#fff3e0
-    style G fill:#fff3e0
-    style H fill:#fff3e0
-    style I fill:#e8f5e8
-    style J fill:#e8f5e8
-    style K fill:#fce4ec
-    style L fill:#e1f5fe
+    style A fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
+    style B fill:#424242,stroke:#212121,stroke-width:2px,color:#fff
+    style C fill:#6a1b9a,stroke:#4a148c,stroke-width:2px,color:#fff
+    style D fill:#7b1fa2,stroke:#4a148c,stroke-width:2px,color:#fff
+    style E fill:#8e24aa,stroke:#4a148c,stroke-width:2px,color:#fff
+    style F fill:#f57c00,stroke:#e65100,stroke-width:2px,color:#fff
+    style G fill:#ff9800,stroke:#e65100,stroke-width:2px,color:#fff
+    style H fill:#fb8c00,stroke:#e65100,stroke-width:2px,color:#fff
+    style I fill:#388e3c,stroke:#1b5e20,stroke-width:2px,color:#fff
+    style J fill:#2e7d32,stroke:#1b5e20,stroke-width:2px,color:#fff
+    style K fill:#c2185b,stroke:#880e4f,stroke-width:2px,color:#fff
+    style L fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
 ```
 
 **Block Color Legend:**
-- 🔵 **Blue**: Reference/Output
-- 🟣 **Purple**: Controllers  
-- 🟠 **Orange**: Actuator Constraints
-- 🟢 **Green**: Physical Dynamics
-- 🟡 **Pink**: Sensors
+- 🔵 **Blue**: Reference/Output blocks
+- ⚫ **Gray**: Error calculation
+- 🟣 **Purple**: Controller blocks (LQR/PID)
+- 🟠 **Orange**: Actuator constraint blocks
+- 🟢 **Green**: Physical dynamics blocks
+- 🔴 **Pink**: Sensor blocks
 
 ## Usage
 ```bash
