@@ -1,7 +1,7 @@
 import json
 import numpy as np
-from scipy.linalg import solve_continuous_are
-from scipy.signal import StateSpace, cont2discrete
+from scipy.linalg import solve_discrete_are
+from scipy.signal import cont2discrete, StateSpace
 import matplotlib.pyplot as plt
 from collections import deque
 
@@ -12,49 +12,19 @@ def load_config(path: str) -> dict:
         return json.load(f)
 
 
-class DelayBlock:
+def build_model(config: dict) -> StateSpace:
     """
-    Implements a discrete-time delay combining a fixed dead-time and
-    a movement-based delay using servo speed limits.
+    Build and return the discrete-time state-space model for 1D rocket control.
+    The model is sampled at the MCU loop rate (dt = 1/servo_frequency_hz).
     """
-    def __init__(self, dead_time_sec: float, dt: float, servo_speed_deg_per_sec: float,
-                 init: float = 0.0):
-        self.dt = dt
-        self.dead_steps = int(round(dead_time_sec / dt))
-        self.speed = servo_speed_deg_per_sec
-        self.queue = deque()
-        self.current_step = 0
-        self.last_u = init
-        self.last_out = init
-
-    def __call__(self, u: float) -> float:
-        # Compute movement-based additional delay (in steps)
-        delta_deg = abs(np.degrees(u) - np.degrees(self.last_u))
-        self.last_u = u
-        # time for movement at max servo speed
-        move_time = delta_deg / self.speed if self.speed > 0 else 0.0
-        move_steps = int(round(move_time / self.dt))
-        # schedule release for this command
-        release_step = self.current_step + self.dead_steps + move_steps
-        self.queue.append((release_step, u))
-
-        # default output until due
-        out = self.last_out
-        # release queued commands when scheduled
-        while self.queue and self.queue[0][0] <= self.current_step:
-            out = self.queue.popleft()[1]
-        self.last_out = out
-        self.current_step += 1
-        return out
-
-
-def build_model(config: dict) -> tuple:
+    # Physical parameters
     I = config.get('moment_of_inertia', 0.00469)
     l = config.get('tvc_to_COM', 0.147)
     T0 = config.get('constant_thrust_N', 3.5)
     k = T0 * l / I
     tau = config.get('servo_time_constant_sec', config.get('servo_delay_sec', 0.03333))
 
+    # Continuous-time matrices (for ZOH discretization)
     A = np.array([[0, 1, 0],
                   [0, 0, k],
                   [0, 0, -1.0 / tau]])
@@ -62,135 +32,159 @@ def build_model(config: dict) -> tuple:
     C = np.array([[1, 0, 0], [0, 1, 0]])
     D = np.zeros((2, 1))
 
-    sys_c = StateSpace(A, B, C, D)
+    # Discretize at the MCU sample rate
     fs = config.get('servo_frequency_hz', 50)
-    dt = 1.0 / fs
+    dt = 1.0 / fs  # sample time in seconds
     A_d, B_d, C_d, D_d, _ = cont2discrete((A, B, C, D), dt, method='zoh')
     sys_d = StateSpace(A_d, B_d, C_d, D_d, dt=dt)
+    return sys_d
 
-    return sys_c, sys_d
 
-
-def design_lqr(A: np.ndarray, B: np.ndarray, Q=None, R=None) -> np.ndarray:
-    n = A.shape[0]
-    m = B.shape[1]
+def design_lqr(A_d: np.ndarray, B_d: np.ndarray, Q=None, R=None) -> np.ndarray:
+    """
+    Design a discrete-time LQR controller.
+    Solves X = A'XA - A'XB(B'XB + R)^{-1}B'XA + Q
+    and returns K = (B'XB + R)^{-1} B'X A.
+    """
+    n, m = A_d.shape[0], B_d.shape[1]
     Q = Q if Q is not None else np.eye(n)
     R = R if R is not None else np.eye(m)
-    P = solve_continuous_are(A, B, Q, R)
-    return np.linalg.solve(R, B.T @ P)
+    # Solve discrete Riccati equation
+    X = solve_discrete_are(A_d, B_d, Q, R)
+    # Compute gain
+    K = np.linalg.inv(B_d.T @ X @ B_d + R) @ (B_d.T @ X @ A_d)
+    return K
 
 
 def apply_servo_constraints(u_cmd: float, config: dict, dt: float, u_prev: float = None) -> float:
+    """
+    Enforce linkage ratio, rate & angle limits, and motor offset.
+    Input u_cmd: desired TVC deflection [rad]. Output: constrained TVC [rad].
+    """
     ratio = config.get('tvc_linkage_ratio', 1)
-    servo_cmd_deg = np.degrees(u_cmd) * ratio
+    servo_deg = np.degrees(u_cmd) * ratio
 
     if u_prev is not None:
         max_rate = config.get('tvc_deg_per_second_max', 125.0)
-        max_delta = max_rate * dt
-        prev_servo_deg = np.degrees(u_prev) * ratio
-        prev_servo_deg -= config.get('tvc_motor_offset_x_deg', 0.0)
-        delta = servo_cmd_deg - prev_servo_deg
-        servo_cmd_deg = prev_servo_deg + np.clip(delta, -max_delta, max_delta)
+        delta_max = max_rate * dt
+        prev_deg = np.degrees(u_prev) * ratio - config.get('tvc_motor_offset_x_deg', 0.0)
+        servo_deg = prev_deg + np.clip(servo_deg - prev_deg, -delta_max, delta_max)
 
-    max_tvc = config.get('tvc_angle_range', 8.0)
-    servo_cmd_deg = np.clip(servo_cmd_deg, -max_tvc, max_tvc)
-    servo_cmd_deg += config.get('tvc_motor_offset_x_deg', 0.0)
+    limit = config.get('tvc_angle_range', 8.0)
+    servo_deg = np.clip(servo_deg, -limit, limit)
+    servo_deg += config.get('tvc_motor_offset_x_deg', 0.0)
 
-    return np.radians(servo_cmd_deg / ratio)
+    return np.radians(servo_deg / ratio)
 
 
-def simulate_response(sys, K, config, T=None, initial_angle=None, controller_type='LQR'):
-    fs = config.get('servo_frequency_hz', 50)
-    dt = 1.0 / fs
+class DelayBlock:
+    """
+    Discrete-time delay: fixed dead-time + move-time based on max servo speed.
+    """
+    def __init__(self, dead_time_sec: float, dt: float, speed_deg_per_sec: float):
+        self.dt = dt
+        self.dead_steps = int(np.round(dead_time_sec / dt))
+        self.speed = speed_deg_per_sec
+        self.queue = deque()
+        self.step = 0
+        self.last_u = 0.0
+        self.last_out = 0.0
+
+    def __call__(self, u: float) -> float:
+        # compute movement delay steps
+        delta_deg = abs(np.degrees(u) - np.degrees(self.last_u))
+        self.last_u = u
+        move_steps = int(np.round((delta_deg / self.speed) / self.dt)) if self.speed > 0 else 0
+        release = self.step + self.dead_steps + move_steps
+        self.queue.append((release, u))
+
+        out = self.last_out
+        if self.queue and self.queue[0][0] <= self.step:
+            out = self.queue.popleft()[1]
+            self.last_out = out
+        self.step += 1
+        return out
+
+
+def simulate_response(sys_d: StateSpace, K: np.ndarray, config: dict,
+                      T: float = None, initial_angle_deg: float = None,
+                      controller_type: str = 'LQR') -> tuple:
+    """
+    Run discrete-time closed-loop sim at dt=sys_d.dt. Returns t,y,u_cmd,u_act.
+    """
+    dt = sys_d.dt
+    fs = 1.0 / dt
     T = config.get('sim_time_seconds', 6.0) if T is None else T
-    initial_angle = np.radians(config.get('initial_x_rot_angle', 20.0)) if initial_angle is None else initial_angle
-    n_steps = int(T * fs)
-    t = np.linspace(0, T, n_steps)
+    init_deg = config.get('initial_x_rot_angle', 20.0) if initial_angle_deg is None else initial_angle_deg
+    x0 = np.radians(init_deg)
 
+    n = int(T * fs)
+    t = np.arange(n) * dt
+
+    # Delay block
     delay = DelayBlock(config.get('servo_delay_sec', 0.03333), dt,
-                       config.get('tvc_deg_per_second_max', 125.0), init=0.0)
+                       config.get('tvc_deg_per_second_max', 125.0))
 
-    A, B, C = sys.A, sys.B, sys.C
-    x = np.zeros((n_steps, A.shape[0]))
-    y = np.zeros((n_steps, C.shape[0]))
-    u_cmd = np.zeros(n_steps)
-    u_act = np.zeros(n_steps)
+    A, B, C, D = sys_d.A, sys_d.B, sys_d.C, sys_d.D
+    x = np.zeros((n, A.shape[0])); y = np.zeros((n, C.shape[0]))
+    u_cmd = np.zeros(n); u_act = np.zeros(n)
+    x[0, 0] = x0
+    integral = 0.0
+    windup = config.get('INTEGRAL_WINDUP_LIMIT_ANGLE', 3.0)
 
-    x[0, 0] = initial_angle
-    integral_err = 0.0
-    windup_limit = config.get('INTEGRAL_WINDUP_LIMIT_ANGLE', 3.0)
-
-    for i in range(n_steps - 1):
+    for k in range(n-1):
+        # ctrl law
         if controller_type == 'PID':
-            kp, kd, ki = config.get('STAB_KP', 0.0), config.get('STAB_KD', 0.0), config.get('STAB_KI', 0.0)
-            err, rate = x[i, 0], x[i, 1]
-            integral_err = np.clip(integral_err + err * dt, -windup_limit, windup_limit)
-            u = -(kp * err + kd * rate + ki * integral_err)
+            kp, kd, ki = (config.get(v,0.0) for v in ['STAB_KP','STAB_KD','STAB_KI'])
+            e, r = x[k,0], x[k,1]
+            integral = np.clip(integral + e*dt, -windup, windup)
+            u = -(kp*e + kd*r + ki*integral)
         else:
-            u = (-K @ x[i]).item()
-        u_cmd[i] = u
+            u = float(-K @ x[k])
+        u_cmd[k] = u
 
-        u_prev = u_act[i-1] if i > 0 else None
-        u_cons = apply_servo_constraints(u, config, dt, u_prev)
-        u_delayed = delay(u_cons)
-        u_act[i] = u_cons
+        # apply constraints + delay
+        u_c = apply_servo_constraints(u, config, dt, u_act[k-1] if k>0 else None)
+        u_d = delay(u_c)
+        u_act[k] = u_c
 
-        x_dot = A @ x[i] + B.flatten() * u_delayed
-        x[i+1] = x[i] + dt * x_dot
-        y[i] = C @ x[i]
+        # discrete update
+        x[k+1] = A @ x[k] + B.flatten()*u_d
+        y[k]   = C @ x[k] + D.flatten()*u_d
 
-    y[-1] = C @ x[-1]
+    y[-1] = C @ x[-1] + D.flatten()*u_act[-1]
     return t, y, u_cmd, u_act
 
 
 def plot_responses(responses: dict, config: dict):
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
-    for name, (t, y, _, _) in responses.items():
-        ax1.plot(t, np.degrees(y[:, 0]), label=name)
-    ax1.axhline(0, linestyle='--', alpha=0.5, label='Target')
-    ax1.set(xlabel='Time (s)', ylabel='Angle (deg)', title='Attitude Control')
-    ax1.legend()
-    ax1.grid(alpha=0.3)
+    """Plot attitude and actuator signals."""
+    fig, (ax1, ax2) = plt.subplots(2,1, figsize=(10,6))
+    for name,(t,y,_,_) in responses.items(): ax1.plot(t, np.degrees(y[:,0]), label=name)
+    ax1.axhline(0, ls='--', alpha=0.6, label='Ref')
+    ax1.set(xlabel='Time [s]', ylabel='Angle [deg]'); ax1.legend(); ax1.grid()
 
-    for name, (t, _, _, u_act) in responses.items():
-        ax2.plot(t, np.degrees(u_act), label=name)
-    lim = config.get('tvc_angle_range', 8.0)
-    ax2.axhline(lim, linestyle='--', alpha=0.5, label='TVC Limits')
-    ax2.axhline(-lim, linestyle='--', alpha=0.5)
-    ax2.set(xlabel='Time (s)', ylabel='TVC Deflection (deg)', title='Control Signals')
-    ax2.legend()
-    ax2.grid(alpha=0.3)
-
-    plt.tight_layout()
-    plt.show()
+    for name,(t,_,_,u) in responses.items(): ax2.step(t, np.degrees(u), where='post', label=name)
+    lim=config.get('tvc_angle_range',8.0)
+    ax2.axhline(lim,ls='--',alpha=0.6); ax2.axhline(-lim,ls='--',alpha=0.6, label='±Limit')
+    ax2.set(xlabel='Time [s]', ylabel='TVC [deg]'); ax2.legend(); ax2.grid()
+    plt.tight_layout(); plt.show()
 
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser("LQR vs PID Rocket Control Simulation")
-    parser.add_argument('config', help='JSON configuration file')
-    parser.add_argument('--T', type=float, default=None, help='Simulation time (s)')
-    parser.add_argument('--angle', type=float, default=None, help='Initial angle (deg)')
-    parser.add_argument('--thrust', type=float, default=None, help='Constant thrust (N)')
-    args = parser.parse_args()
+    p=argparse.ArgumentParser()
+    p.add_argument('config'); p.add_argument('--T',type=float); p.add_argument('--angle',type=float); p.add_argument('--thrust',type=float)
+    args=p.parse_args()
+    cfg=load_config(args.config)
+    if args.thrust is not None: cfg['constant_thrust_N']=args.thrust
 
-    cfg = load_config(args.config)
-    if args.thrust is not None:
-        cfg['constant_thrust_N'] = args.thrust
+    sys_d=build_model(cfg)
+    print(f"Using dt={sys_d.dt:.3f}s ({1/sys_d.dt:.1f}Hz)")
+    K=design_lqr(sys_d.A, sys_d.B, Q=np.diag([20,0.1,1]), R=np.array([[50]]))
+    init=args.angle if args.angle is not None else None
+    r1 = simulate_response(sys_d, K, cfg, T=args.T, initial_angle_deg=init, controller_type='LQR')
+    r2 = simulate_response(sys_d, None, cfg, T=args.T, initial_angle_deg=init, controller_type='PID')
+    plot_responses({'LQR':r1,'PID':r2},cfg)
+    print(f"Final LQR={np.degrees(r1[1][-1,0]):.2f}°, PID={np.degrees(r2[1][-1,0]):.2f}°")
 
-    sys_c, sys_d = build_model(cfg)
-    Q = np.diag([20, 0.1, 1])
-    R = np.array([[50]])
-    K = design_lqr(sys_c.A, sys_c.B, Q, R)
-
-    init_rad = np.radians(args.angle) if args.angle is not None else None
-    resp_lqr = simulate_response(sys_c, K, cfg, T=args.T, initial_angle=init_rad, controller_type='LQR')
-    resp_pid = simulate_response(sys_c, None, cfg, T=args.T, initial_angle=init_rad, controller_type='PID')
-
-    plot_responses({'LQR': resp_lqr, 'PID': resp_pid}, cfg)
-
-    print(f"Final angles => LQR: {np.degrees(resp_lqr[1][-1,0]):.2f}°, PID: {np.degrees(resp_pid[1][-1,0]):.2f}°")
-
-
-if __name__ == '__main__':
-    main()
+if __name__=='__main__': main()
