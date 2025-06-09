@@ -9,6 +9,32 @@ pip install numpy scipy matplotlib
 
 ## System Architecture
 
+### Discretization Method: Option 3 - Continuous Controller + ZOH + Continuous Plant
+
+The system uses **continuous-time controller design** with **Zero-Order Hold (ZOH) discretization**:
+
+1. **Servo delay** is modeled as a first-order lag in the continuous domain: `δ̇ = -δ/τ + u/τ` (τ = 33ms)
+2. **Continuous plant** includes rocket dynamics + servo dynamics as a 3-state system
+3. **ZOH discretization** converts the continuous plant to discrete at 50Hz sampling rate
+4. **Continuous LQR controller** is designed using the continuous plant, then applied to the discrete system
+
+This approach allows linear controller design in the s-domain while properly accounting for the discrete MCU implementation and servo delays.
+
+```mermaid
+graph LR
+    A["Continuous<br/>LQR Controller<br/>K designed in s-domain"] --> B["ZOH<br/>Ts = 20ms<br/>50Hz sampling"]
+    B --> C["Discrete Plant<br/>with Servo Delay<br/>δ̇ = -δ/τ + u/τ<br/>τ = 33ms"]
+    C --> D["Rocket<br/>Dynamics<br/>θ̇ = ω<br/>ω̇ = k·δ"]
+    D --> A
+    
+    style A fill:#7b1fa2,stroke:#4a148c,stroke-width:2px,color:#fff
+    style B fill:#ff9800,stroke:#e65100,stroke-width:2px,color:#fff
+    style C fill:#388e3c,stroke:#1b5e20,stroke-width:2px,color:#fff
+    style D fill:#2e7d32,stroke:#1b5e20,stroke-width:2px,color:#fff
+```
+
+### Detailed System Block Diagram
+
 The control system is implemented as modular building blocks, each corresponding to physical components and config parameters:
 
 ```mermaid

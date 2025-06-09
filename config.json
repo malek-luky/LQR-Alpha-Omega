@@ -11,7 +11,7 @@
         0,
         0
     ],
-    "initial_x_rot_angle": 20,
+    "initial_x_rot_angle": 3,
     "initial_y_rot_angle": -4,
     "initial_z_rot_angle": 0.0,
     "target_position": [
@@ -41,9 +41,9 @@
     "LIFTOFF_POS_KP": 0,
     "LIFTOFF_POS_KD": 0,
     "LIFTOFF_POS_KI": 0,
-    "STAB_KP": 0.15,
+    "STAB_KP": 0.45,
     "STAB_KI": 0.08,
-    "STAB_KD": 0.055,
+    "STAB_KD": 0.085,
     "POS_KP": 0.67,
     "POS_KI": 0,
     "POS_KD": 1.08,
