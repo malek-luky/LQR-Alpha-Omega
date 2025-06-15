@@ -1,8 +1,8 @@
 {
     "sim_time_seconds": 6,
-    "simulation_start_time": 0,
+    "simulation_start_time": 0.4,
     "delta_t": 0.002,
-    "sensor_frequency_hz": 50,
+    "sensor_frequency_hz": 100,
     "servo_frequency_hz": 50,
     "vis_update_time": 0.05,
     "visualization_enabled": true,
@@ -11,8 +11,8 @@
         0,
         0
     ],
-    "initial_x_rot_angle": 3,
-    "initial_y_rot_angle": -4,
+    "initial_x_rot_angle": 35,
+    "initial_y_rot_angle": 0,
     "initial_z_rot_angle": 0.0,
     "target_position": [
         0,
@@ -23,7 +23,7 @@
     "moment_of_inertia": 0.00469,
     "tvc_to_COM": 0.147,
     "tvc_angle_range": 8.0,
-    "tvc_deg_per_second_max": 125.0,
+    "tvc_deg_per_second_max": 500.0,
     "tvc_linkage_ratio": 4,
     "servo_delay_sec": 0.03333,
     "motor_mass_start": 0.037,
@@ -41,9 +41,9 @@
     "LIFTOFF_POS_KP": 0,
     "LIFTOFF_POS_KD": 0,
     "LIFTOFF_POS_KI": 0,
-    "STAB_KP": 0.45,
-    "STAB_KI": 0.08,
-    "STAB_KD": 0.085,
+    "STAB_KP": 0.3,
+    "STAB_KI": 0.5,
+    "STAB_KD": 0.07,
     "POS_KP": 0.67,
     "POS_KI": 0,
     "POS_KD": 1.08,
@@ -61,6 +61,6 @@
     "constant_torque_bias": 0.02,
     "wind_sin_amplitude": 2,
     "wind_sin_frequency": 0.5,
-    "use_constant_thrust": true,
-    "constant_thrust_N": 3.5
+    "use_constant_thrust": false,
+    "constant_thrust_N": 6
 }

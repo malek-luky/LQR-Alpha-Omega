@@ -3,6 +3,8 @@ import numpy as np
 from scipy.linalg import solve_continuous_are, solve_discrete_are
 from scipy.signal import StateSpace, cont2discrete
 import matplotlib.pyplot as plt
+import os
+from datetime import datetime
 
 
 def load_config(path: str) -> dict:
@@ -149,7 +151,17 @@ def simulate_response(sys_d: StateSpace, K, config: dict,
     return t, y, u_cmd, u_actual
 
 
-def plot_responses(responses: dict, config: dict):
+def save_config_with_timestamp(config: dict, output_dir: str, timestamp: str):
+    """Save configuration to output directory with timestamp."""
+    os.makedirs(output_dir, exist_ok=True)
+    config_path = os.path.join(output_dir, f"config_{timestamp}.json")
+    with open(config_path, 'w') as f:
+        json.dump(config, f, indent=2)
+    print(f"Config saved to: {config_path}")
+    return config_path
+
+
+def plot_responses(responses: dict, config: dict, save_path: str = None):
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
     for name, (t, y, _, u_act) in responses.items():
         ax1.plot(t, np.degrees(y[:, 0]), label=f"{name}: θ")
@@ -160,6 +172,12 @@ def plot_responses(responses: dict, config: dict):
         ax.grid(True)
         ax.legend()
     plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Plot saved to: {save_path}")
+    
+    # Always show the plot
     plt.show()
 
 
@@ -191,10 +209,19 @@ def main():
     resp_lqr_d = simulate_response(sys_d, Kd, cfg, T=args.T, initial_angle=init, controller_type='LQR')
     resp_pid   = simulate_response(sys_d, None, cfg, T=args.T, initial_angle=init, controller_type='PID')
 
+    # Generate timestamp (Year-Month-Day-Hour-Min-Second format)
+    timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    output_dir = "output"
+    
+    # Save config with timestamp
+    save_config_with_timestamp(cfg, output_dir, timestamp)
+    
+    # Save plot with timestamp
+    plot_path = os.path.join(output_dir, f"lqr_response_{timestamp}.png")
     plot_responses({'LQR_cont→ZOH': resp_lqr_c,
                     'LQR_discrete': resp_lqr_d,
                     'PID': resp_pid},
-                   cfg)
+                   cfg, save_path=plot_path)
 
     print(f"Final angles (deg): contLQR {np.degrees(resp_lqr_c[1][-1,0]):.2f}, "
           f"discLQR {np.degrees(resp_lqr_d[1][-1,0]):.2f}, "

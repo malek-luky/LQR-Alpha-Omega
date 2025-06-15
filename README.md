@@ -141,7 +141,7 @@ The system uses comprehensive defaults from `config.json`. All relevant paramete
 ```json
 {
     "tvc_angle_range": 8.0,           // Max TVC deflection (±degrees)
-    "tvc_deg_per_second_max": 125.0,  // Max servo rate (deg/s)
+    "tvc_deg_per_second_max": 500.0,  // Max servo rate (deg/s)
     "tvc_linkage_ratio": 4,           // Servo:TVC ratio (4:1)
     "tvc_motor_offset_x_deg": 0.7     // Calibration error (degrees)
 }
